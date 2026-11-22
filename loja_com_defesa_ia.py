@@ -28,6 +28,9 @@ def defesa():
     # 1. Deixa passar arquivos estaticos e health check do Render
     if request.path.startswith("/static") or request.path == "/health":
         return None
+    # LAB DE TESTE: deixa passar TODAS as rotas /lab- pra voce estudar
+    if request.path.startswith("/lab-"):
+        return None
     # 2. Monta o que vamos verificar: URL + corpo
     try:
         corpo = request.get_data(as_text=True, cache=True).lower()
@@ -39,19 +42,6 @@ def defesa():
     for padrao in PADROES_ATAQUE:
         if padrao in texto:
             print(f"[DEFESA] Bloqueado: {request.remote_addr} tentou '{padrao}' em {request.url}")
-            # Classifica o tipo pro grafico
-            if "union" in padrao or "or '1'" in padrao or "' or" in padrao:
-                tipo = "SQL Injection"
-            elif "script" in padrao or "onerror" in padrao or "onload" in padrao:
-                tipo = "XSS"
-            elif ".env" in padrao or "loja.db" in padrao or "../" in padrao:
-                tipo = "Vazamento de Arquivo"
-            else:
-                tipo = "Outro"
-            try:
-                registrar_ataque(tipo, request.url, request.remote_addr)
-            except Exception:
-                pass
             return "Bloqueado pela defesa - tentativa de ataque detectada.", 403
     return None
 
@@ -151,12 +141,90 @@ def admin():
         <input type='password' name='senha' placeholder='Senha do admin'><br><br>
         <button>Entrar</button></form></div>""")
     linhas = "".join([f"<div class='card'>{p['nome']} - R$ {p['preco']:.2f} | Estoque {p['estoque']}</div>" for p in PRODUTOS])
-    return render(f"<h2>Painel Admin</h2><p><a class='btn' href='/painel-ataques'>Ver Grafico de Ataques</a></p><p>Voce esta logado.</p>{linhas}<br><a class='btn' href='/logout'>Sair</a>")
+    return render(f"<h2>Painel Admin</h2><p>Voce esta logado.</p>{linhas}<br><a class='btn' href='/logout'>Sair</a>")
 
 @app.route("/logout")
 def logout():
     session.pop("admin", None)
     return redirect(url_for("home"))
+
+
+@app.route("/lab-vulneravel")
+def lab_vulneravel():
+    # ROTA DE LAB - DE MENTIRINHA, SO PRA TESTE NO SEU SITE
+    # Simula uma busca vulneravel: se vier UNION SELECT, devolve o dado fake
+    q = request.args.get("q", "")
+    if "union select" in q.lower():
+        return render("<div class='card'><h2>💡 LAB - BRECHA ACHADA!</h2><p>Voce conseguiu acessar a parte do LAB!</p><p><b>PRODUTO_SECRETO_FAKE_123</b></p><p>Isso e FALSO, so pra voce aprender como um ataque funciona.</p><a class='btn' href='/'>Voltar pra loja</a></div>")
+    return render("<div class='card'><h2>LAB Vulneravel - Teste</h2><p>Essa pagina e de proposito vulneravel, so pra teste no seu site.</p><p>Tente: ?q=UNION SELECT</p><a class='btn' href='/'>Voltar pra loja</a></div>")
+
+
+# ==================================================================
+# LABORATORIO COMPLETO - SO DADO FAKE, SO NO SEU SITE
+# ==================================================================
+DADOS_FAKE_LAB = {
+    "sqli": "FLAG_FAKE_SQLI_123",
+    "xss": "FLAG_FAKE_XSS_456",
+    "arquivo": "FLAG_FAKE_ARQUIVO_789",
+    "login": "FLAG_FAKE_LOGIN_000",
+}
+
+@app.route("/lab")
+def lab_home():
+    return render("""<h2>🧪 Laboratorio Completo - STUDIO WEAR</h2>
+    <div class='card'><p>Lab so pra estudo, no seu proprio site. Tudo aqui e FAKE.</p>
+    <p><b>Fase 1:</b> <a href='/lab-sqli'>/lab-sqli</a> - Achar brecha SQLi</p>
+    <p><b>Fase 2:</b> <a href='/lab-xss'>/lab-xss</a> - Achar brecha XSS</p>
+    <p><b>Fase 3:</b> <a href='/lab-arquivo'>/lab-arquivo</a> - Achar vazamento de arquivo</p>
+    <p><b>Fase 4:</b> <a href='/lab-login'>/lab-login</a> - Achar brecha de login</p>
+    <p><b>Fase 5:</b> Corrigir tudo e ver o painel de defesa</p>
+    </div><a class='btn' href='/'>Voltar pra loja</a>""")
+
+@app.route("/lab-sqli")
+def lab_sqli():
+    q = request.args.get("q", "")
+    # FASE 1: se vier UNION SELECT, mostra a flag fake
+    if "union select" in q.lower():
+        return render(f"<div class='card'><h2>💡 FASE 1 CONCLUIDA - SQLi!</h2><p>Voce achou a brecha do SQLi.</p><p><b>{DADOS_FAKE_LAB['sqli']}</b></p><p>Anota essa flag e vai pra Fase 2.</p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
+    return render("""<div class='card'><h2>Fase 1 - SQLi</h2><p>Busca normal aqui. Tente achar o que faz vazar a flag.</p>
+    <form action='/lab-sqli' method='get'><input name='q' placeholder='Tente: camiseta'><button>Buscar</button></form>
+    <p>Dica: a loja normal filtra em memoria e NAO vaza. O LAB simula o que uma loja vulneravel faria.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
+
+@app.route("/lab-xss")
+def lab_xss():
+    q = request.args.get("q", "")
+    if "<script" in q.lower() or "alert(" in q.lower():
+        return render(f"<div class='card'><h2>💡 FASE 2 CONCLUIDA - XSS!</h2><p>Voce achou a brecha de XSS.</p><p><b>{DADOS_FAKE_LAB['xss']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
+    return render("""<div class='card'><h2>Fase 2 - XSS</h2><p>O que voce digitar aqui aparece na tela sem filtro (so no LAB).</p>
+    <form action='/lab-xss' method='get'><input name='q' placeholder='Digite algo'><button>Testar</button></form></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
+
+@app.route("/lab-arquivo")
+def lab_arquivo():
+    f = request.args.get("f", "")
+    if ".env" in f or "loja.db" in f or "../" in f:
+        return render(f"<div class='card'><h2>💡 FASE 3 CONCLUIDA - Vazamento de arquivo!</h2><p>Voce tentou acessar arquivo proibido e o LAB mostrou a flag.</p><p><b>{DADOS_FAKE_LAB['arquivo']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
+    return render("""<div class='card'><h2>Fase 3 - Vazamento de arquivo</h2><p>Parametro ?f= nome do arquivo</p>
+    <p>Exemplo normal: <a href='/lab-arquivo?f=produto.txt'>?f=produto.txt</a></p>
+    <p>Tente acessar algo que nao deveria.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
+
+@app.route("/lab-login", methods=["GET", "POST"])
+def lab_login():
+    if request.method == "POST":
+        u = request.form.get("usuario", "")
+        s = request.form.get("senha", "")
+        # FASE 4: login fake vulneravel - ' OR '1'='1 entra
+        if "' or '1'='1" in (u + s).lower() or "' or 1=1" in (u + s).lower():
+            return render(f"<div class='card'><h2>💡 FASE 4 CONCLUIDA - Login bypass!</h2><p>Voce entrou sem saber a senha, usando SQLi no login.</p><p><b>{DADOS_FAKE_LAB['login']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
+        return render("<div class='card'><b>Login errado no LAB.</b></div><a class='btn' href='/lab-login'>Tentar de novo</a>")
+    return render("""<h2>Fase 4 - Login</h2><div class='card'><form method='post'>
+    <input name='usuario' placeholder='Usuario'><br><br>
+    <input name='senha' placeholder='Senha'><br><br><button>Entrar</button></form>
+    <p>Dica: no LAB, a senha fake nao e o objetivo - o objetivo e entrar SEM a senha.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
+
+@app.route("/lab-vulneravel")
+def lab_vulneravel_old():
+    # Mantem compatibilidade com o teste antigo
+    return redirect("/lab-sqli")
 
 @app.errorhandler(404)
 def erro404(e):
@@ -165,63 +233,6 @@ def erro404(e):
 @app.errorhandler(403)
 def erro403(e):
     return "Bloqueado pela defesa - tentativa de ataque detectada.", 403
-
-
-# ============================================================
-# PAINEL COM GRAFICO DE ATAQUES - NOVO
-# Toda vez que a defesa bloqueia, salva aqui e mostra no grafico
-# ============================================================
-ATAQUES_LOG = []  # lista na memoria: {"tipo": "SQL", "hora": "...", "ip": "...", "url": "..."}
-
-def registrar_ataque(tipo, url, ip):
-    import datetime
-    ATAQUES_LOG.append({
-        "tipo": tipo,
-        "hora": datetime.datetime.now().strftime("%H:%M:%S"),
-        "ip": ip,
-        "url": url[:80]
-    })
-    # Guarda so os ultimos 50 pra nao encher a memoria
-    if len(ATAQUES_LOG) > 50:
-        ATAQUES_LOG.pop(0)
-
-@app.route("/painel-ataques")
-def painel_ataques():
-    if not session.get("admin"):
-        return redirect(url_for("admin"))
-    # Conta por tipo
-    from collections import Counter
-    cont = Counter([a["tipo"] for a in ATAQUES_LOG])
-    sql = cont.get("SQL Injection", 0)
-    xss = cont.get("XSS", 0)
-    arquivo = cont.get("Vazamento de Arquivo", 0)
-    outros = cont.get("Outro", 0)
-    total = len(ATAQUES_LOG)
-    linhas = "".join([f"<tr><td>{a['hora']}</td><td>{a['tipo']}</td><td>{a['ip']}</td><td style='word-break:break-all'>{a['url']}</td></tr>" for a in reversed(ATAQUES_LOG)])
-    if not linhas:
-        linhas = "<tr><td colspan=4>Nenhum ataque ainda. Quando alguem tentar, aparece aqui!</td></tr>"
-    html = f"""
-    <h2>🛡️ Painel de Ataques - Grafico em Tempo Real</h2>
-    <div class='card'><h3>Total de ataques bloqueados: {total}</h3>
-    <p>SQL Injection: <b>{sql}</b> | XSS: <b>{xss}</b> | Vazamento: <b>{arquivo}</b> | Outros: <b>{outros}</b></p>
-    <canvas id="grafico" width="800" height="220" style="max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px"></canvas>
-    <script>
-    var c = document.getElementById('grafico'); var ctx = c.getContext('2d');
-    var dados = [{{label:'SQL', v:{sql}, cor:'#ef4444'}}, {{label:'XSS', v:{xss}, cor:'#f59e0b'}}, {{label:'Vazamento', v:{arquivo}, cor:'#8b5cf6'}}, {{label:'Outros', v:{outros}, cor:'#06b6d4'}}];
-    var max = Math.max(1, ...dados.map(d=>d.v));
-    ctx.font = '14px Arial'; ctx.clearRect(0,0,800,220);
-    dados.forEach((d,i)=>{{
-        var x = 40 + i*190; var h = (d.v/max)*150;
-        ctx.fillStyle = d.cor; ctx.fillRect(x, 180-h, 100, h);
-        ctx.fillStyle = '#111'; ctx.fillText(d.label, x+10, 200); ctx.fillText(d.v, x+40, 170-h);
-    }});
-    </script>
-    <p style="font-size:12px;color:#666">Atualiza a pagina pra ver ataque novo. O grafico cresce quando a defesa bloqueia.</p>
-    </div>
-    <div class='card'><h3>Ultimos ataques</h3><table style="width:100%;font-size:13px"><tr><th>Hora</th><th>Tipo</th><th>IP</th><th>URL</th></tr>{linhas}</table></div>
-    <a class='btn' href='/'>Voltar pra loja</a>
-    """
-    return render(html)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
