@@ -39,6 +39,19 @@ def defesa():
     for padrao in PADROES_ATAQUE:
         if padrao in texto:
             print(f"[DEFESA] Bloqueado: {request.remote_addr} tentou '{padrao}' em {request.url}")
+            # Classifica o tipo pro grafico
+            if "union" in padrao or "or '1'" in padrao or "' or" in padrao:
+                tipo = "SQL Injection"
+            elif "script" in padrao or "onerror" in padrao or "onload" in padrao:
+                tipo = "XSS"
+            elif ".env" in padrao or "loja.db" in padrao or "../" in padrao:
+                tipo = "Vazamento de Arquivo"
+            else:
+                tipo = "Outro"
+            try:
+                registrar_ataque(tipo, request.url, request.remote_addr)
+            except Exception:
+                pass
             return "Bloqueado pela defesa - tentativa de ataque detectada.", 403
     return None
 
@@ -138,7 +151,7 @@ def admin():
         <input type='password' name='senha' placeholder='Senha do admin'><br><br>
         <button>Entrar</button></form></div>""")
     linhas = "".join([f"<div class='card'>{p['nome']} - R$ {p['preco']:.2f} | Estoque {p['estoque']}</div>" for p in PRODUTOS])
-    return render(f"<h2>Painel Admin</h2><p>Voce esta logado.</p>{linhas}<br><a class='btn' href='/logout'>Sair</a>")
+    return render(f"<h2>Painel Admin</h2><p><a class='btn' href='/painel-ataques'>Ver Grafico de Ataques</a></p><p>Voce esta logado.</p>{linhas}<br><a class='btn' href='/logout'>Sair</a>")
 
 @app.route("/logout")
 def logout():
@@ -155,18 +168,60 @@ def erro403(e):
 
 
 # ============================================================
-# LAB - FALHA DE MENTIRINHA PRA TESTAR ONLINE DE VERDADE
-# Dado FALSO, nao e dado real. So pra scan achar.
-# DEPOIS QUE TESTAR, A GENTE APAGA ESSA ROTA!
+# PAINEL COM GRAFICO DE ATAQUES - NOVO
+# Toda vez que a defesa bloqueia, salva aqui e mostra no grafico
 # ============================================================
-@app.route("/lab-vulneravel")
-def lab_vulneravel():
-    q = request.args.get("q", "")
-    # FALHA 1: devolve sem escapar (XSS simulado)
-    # FALHA 2: se tiver UNION SELECT, devolve dado FALSO
-    if "union select" in q.lower():
-        return f"LAB - Dado FALSO vazado: PRODUTO_SECRETO_FAKE_123 | Sua busca: {q}"
-    return f"LAB - Voce buscou: {q}"
+ATAQUES_LOG = []  # lista na memoria: {"tipo": "SQL", "hora": "...", "ip": "...", "url": "..."}
+
+def registrar_ataque(tipo, url, ip):
+    import datetime
+    ATAQUES_LOG.append({
+        "tipo": tipo,
+        "hora": datetime.datetime.now().strftime("%H:%M:%S"),
+        "ip": ip,
+        "url": url[:80]
+    })
+    # Guarda so os ultimos 50 pra nao encher a memoria
+    if len(ATAQUES_LOG) > 50:
+        ATAQUES_LOG.pop(0)
+
+@app.route("/painel-ataques")
+def painel_ataques():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
+    # Conta por tipo
+    from collections import Counter
+    cont = Counter([a["tipo"] for a in ATAQUES_LOG])
+    sql = cont.get("SQL Injection", 0)
+    xss = cont.get("XSS", 0)
+    arquivo = cont.get("Vazamento de Arquivo", 0)
+    outros = cont.get("Outro", 0)
+    total = len(ATAQUES_LOG)
+    linhas = "".join([f"<tr><td>{a['hora']}</td><td>{a['tipo']}</td><td>{a['ip']}</td><td style='word-break:break-all'>{a['url']}</td></tr>" for a in reversed(ATAQUES_LOG)])
+    if not linhas:
+        linhas = "<tr><td colspan=4>Nenhum ataque ainda. Quando alguem tentar, aparece aqui!</td></tr>"
+    html = f"""
+    <h2>🛡️ Painel de Ataques - Grafico em Tempo Real</h2>
+    <div class='card'><h3>Total de ataques bloqueados: {total}</h3>
+    <p>SQL Injection: <b>{sql}</b> | XSS: <b>{xss}</b> | Vazamento: <b>{arquivo}</b> | Outros: <b>{outros}</b></p>
+    <canvas id="grafico" width="800" height="220" style="max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px"></canvas>
+    <script>
+    var c = document.getElementById('grafico'); var ctx = c.getContext('2d');
+    var dados = [{{label:'SQL', v:{sql}, cor:'#ef4444'}}, {{label:'XSS', v:{xss}, cor:'#f59e0b'}}, {{label:'Vazamento', v:{arquivo}, cor:'#8b5cf6'}}, {{label:'Outros', v:{outros}, cor:'#06b6d4'}}];
+    var max = Math.max(1, ...dados.map(d=>d.v));
+    ctx.font = '14px Arial'; ctx.clearRect(0,0,800,220);
+    dados.forEach((d,i)=>{{
+        var x = 40 + i*190; var h = (d.v/max)*150;
+        ctx.fillStyle = d.cor; ctx.fillRect(x, 180-h, 100, h);
+        ctx.fillStyle = '#111'; ctx.fillText(d.label, x+10, 200); ctx.fillText(d.v, x+40, 170-h);
+    }});
+    </script>
+    <p style="font-size:12px;color:#666">Atualiza a pagina pra ver ataque novo. O grafico cresce quando a defesa bloqueia.</p>
+    </div>
+    <div class='card'><h3>Ultimos ataques</h3><table style="width:100%;font-size:13px"><tr><th>Hora</th><th>Tipo</th><th>IP</th><th>URL</th></tr>{linhas}</table></div>
+    <a class='btn' href='/'>Voltar pra loja</a>
+    """
+    return render(html)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
