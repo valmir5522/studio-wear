@@ -63,7 +63,7 @@ PADROES_ATAQUE = [
 # Bots conhecidos bons (Google, etc) - nao bloqueia
 BOTS_BONS = ["googlebot","bingbot","facebookexternalhit","twitterbot","whatsapp"]
 # User-Agents suspeitos
-UA_SUSPEITOS = ["python-requests","curl","wget","postman","sqlmap","nmap","go-http","axios","httpclient","java/","perl","ruby"]
+UA_SUSPEITOS = ["python-requests","curl","wget","postman","sqlmap","nmap","axios","httpclient","java/","perl","ruby"]  # go-http REMOVIDO: e o Render testando se o site ta vivo, nao e hacker
 
 def ip_cliente():
     # Pega IP real mesmo atras de Cloudflare / proxy
@@ -150,14 +150,18 @@ def guarda_defesa_ia():
         registrar_ataque(ip, "HONEYPOT - Caiu na isca", 100, f"Acessou isca proibida: {request.path}", request.path)
         IPS_BLOQUEADOS[ip] = time.time() + 3600  # bloqueia 1h
         abort(403)
+    ua = request.headers.get("User-Agent","")
+    # 2b. WHITELIST: health check do Render / Uptime - NUNCA bloqueia
+    if ua.startswith("Go-http-client") or request.method == "HEAD":
+        g.ip_cliente = ip
+        return None
     # 3. Calcula risco com a IA
     args_texto = request.query_string.decode(errors="ignore") + " " + str(request.form)[:2000]
-    ua = request.headers.get("User-Agent","")
     score, motivos = calcular_risco(ip, request.path, args_texto, ua)
     if score >= 30:
         PONTOS_IP[ip] += score // 2
         registrar_ataque(ip, " + ".join(motivos[:3]), score, " | ".join(motivos), request.path)
-    if score >= 100:
+    if score >= 150:  # era 100, subiu para nao bloquear cliente normal
         # BLOQUEIO AUTOMATICO
         tempo = 3600 if score < 180 else 86400  # 1h ou 24h se muito grave
         IPS_BLOQUEADOS[ip] = time.time() + tempo
