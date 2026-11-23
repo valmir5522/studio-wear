@@ -6,8 +6,33 @@ from flask import Flask, request, session, redirect, url_for, render_template_st
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "studio-wear-secreta-troque-isso")
+# CORRIGIDO V6/V7: cookie protegido
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,  # so HTTPS - no Render e HTTPS
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_PATH="/",
+)
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Studio2026!")
+
+# CORRIGIDO: rate limit simples do login - bloqueia forca bruta
+from collections import defaultdict
+import time as _time
+TENTATIVAS_LOGIN = defaultdict(list)
+
+@app.after_request
+def headers_seguranca(resp):
+    # CORRIGIDO V6: headers que faltavam
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    # Esconde versao do servidor
+    resp.headers["Server"] = "STUDIO-WEAR"
+    return resp
+
 
 # ==================================================================
 # DEFESA CORRIGIDA - SÓ BLOQUEIA ATAQUE, NUNCA CLIENTE NORMAL
@@ -24,12 +49,15 @@ PADROES_ATAQUE = [
 ROTAS_LIVRES = ["/", "/produtos", "/carrinho", "/admin", "/login", "/health", "/static/"]
 
 @app.before_request
+def bloqueia_metodos():
+    # CORRIGIDO: so GET e POST, resto da 405
+    if request.method not in ("GET", "POST", "HEAD", "OPTIONS"):
+        return "Metodo nao permitido.", 405
+
+@app.before_request
 def defesa():
     # 1. Deixa passar arquivos estaticos e health check do Render
     if request.path.startswith("/static") or request.path == "/health":
-        return None
-    # LAB DE TESTE: deixa passar TODAS as rotas /lab- pra voce estudar
-    if request.path.startswith("/lab-"):
         return None
     # 2. Monta o que vamos verificar: URL + corpo
     try:
@@ -131,6 +159,13 @@ def health():
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     if request.method == "POST":
+        # CORRIGIDO: max 5 tentativas em 5 minutos por IP
+        ip = request.remote_addr or "unknown"
+        agora = _time.time()
+        TENTATIVAS_LOGIN[ip] = [t for t in TENTATIVAS_LOGIN[ip] if agora - t < 300]
+        if len(TENTATIVAS_LOGIN[ip]) >= 5:
+            return render("<div class='card'><b>Muitas tentativas. Espera 5 minutos.</b><br><a class='btn' href='/'>Voltar</a></div>"), 429
+        TENTATIVAS_LOGIN[ip].append(agora)
         senha = request.form.get("senha", "")
         if senha == ADMIN_PASSWORD:
             session["admin"] = True
@@ -147,84 +182,6 @@ def admin():
 def logout():
     session.pop("admin", None)
     return redirect(url_for("home"))
-
-
-@app.route("/lab-vulneravel")
-def lab_vulneravel():
-    # ROTA DE LAB - DE MENTIRINHA, SO PRA TESTE NO SEU SITE
-    # Simula uma busca vulneravel: se vier UNION SELECT, devolve o dado fake
-    q = request.args.get("q", "")
-    if "union select" in q.lower():
-        return render("<div class='card'><h2>💡 LAB - BRECHA ACHADA!</h2><p>Voce conseguiu acessar a parte do LAB!</p><p><b>PRODUTO_SECRETO_FAKE_123</b></p><p>Isso e FALSO, so pra voce aprender como um ataque funciona.</p><a class='btn' href='/'>Voltar pra loja</a></div>")
-    return render("<div class='card'><h2>LAB Vulneravel - Teste</h2><p>Essa pagina e de proposito vulneravel, so pra teste no seu site.</p><p>Tente: ?q=UNION SELECT</p><a class='btn' href='/'>Voltar pra loja</a></div>")
-
-
-# ==================================================================
-# LABORATORIO COMPLETO - SO DADO FAKE, SO NO SEU SITE
-# ==================================================================
-DADOS_FAKE_LAB = {
-    "sqli": "FLAG_FAKE_SQLI_123",
-    "xss": "FLAG_FAKE_XSS_456",
-    "arquivo": "FLAG_FAKE_ARQUIVO_789",
-    "login": "FLAG_FAKE_LOGIN_000",
-}
-
-@app.route("/lab")
-def lab_home():
-    return render("""<h2>🧪 Laboratorio Completo - STUDIO WEAR</h2>
-    <div class='card'><p>Lab so pra estudo, no seu proprio site. Tudo aqui e FAKE.</p>
-    <p><b>Fase 1:</b> <a href='/lab-sqli'>/lab-sqli</a> - Achar brecha SQLi</p>
-    <p><b>Fase 2:</b> <a href='/lab-xss'>/lab-xss</a> - Achar brecha XSS</p>
-    <p><b>Fase 3:</b> <a href='/lab-arquivo'>/lab-arquivo</a> - Achar vazamento de arquivo</p>
-    <p><b>Fase 4:</b> <a href='/lab-login'>/lab-login</a> - Achar brecha de login</p>
-    <p><b>Fase 5:</b> Corrigir tudo e ver o painel de defesa</p>
-    </div><a class='btn' href='/'>Voltar pra loja</a>""")
-
-@app.route("/lab-sqli")
-def lab_sqli():
-    q = request.args.get("q", "")
-    # FASE 1: se vier UNION SELECT, mostra a flag fake
-    if "union select" in q.lower():
-        return render(f"<div class='card'><h2>💡 FASE 1 CONCLUIDA - SQLi!</h2><p>Voce achou a brecha do SQLi.</p><p><b>{DADOS_FAKE_LAB['sqli']}</b></p><p>Anota essa flag e vai pra Fase 2.</p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
-    return render("""<div class='card'><h2>Fase 1 - SQLi</h2><p>Busca normal aqui. Tente achar o que faz vazar a flag.</p>
-    <form action='/lab-sqli' method='get'><input name='q' placeholder='Tente: camiseta'><button>Buscar</button></form>
-    <p>Dica: a loja normal filtra em memoria e NAO vaza. O LAB simula o que uma loja vulneravel faria.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
-
-@app.route("/lab-xss")
-def lab_xss():
-    q = request.args.get("q", "")
-    if "<script" in q.lower() or "alert(" in q.lower():
-        return render(f"<div class='card'><h2>💡 FASE 2 CONCLUIDA - XSS!</h2><p>Voce achou a brecha de XSS.</p><p><b>{DADOS_FAKE_LAB['xss']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
-    return render("""<div class='card'><h2>Fase 2 - XSS</h2><p>O que voce digitar aqui aparece na tela sem filtro (so no LAB).</p>
-    <form action='/lab-xss' method='get'><input name='q' placeholder='Digite algo'><button>Testar</button></form></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
-
-@app.route("/lab-arquivo")
-def lab_arquivo():
-    f = request.args.get("f", "")
-    if ".env" in f or "loja.db" in f or "../" in f:
-        return render(f"<div class='card'><h2>💡 FASE 3 CONCLUIDA - Vazamento de arquivo!</h2><p>Voce tentou acessar arquivo proibido e o LAB mostrou a flag.</p><p><b>{DADOS_FAKE_LAB['arquivo']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
-    return render("""<div class='card'><h2>Fase 3 - Vazamento de arquivo</h2><p>Parametro ?f= nome do arquivo</p>
-    <p>Exemplo normal: <a href='/lab-arquivo?f=produto.txt'>?f=produto.txt</a></p>
-    <p>Tente acessar algo que nao deveria.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
-
-@app.route("/lab-login", methods=["GET", "POST"])
-def lab_login():
-    if request.method == "POST":
-        u = request.form.get("usuario", "")
-        s = request.form.get("senha", "")
-        # FASE 4: login fake vulneravel - ' OR '1'='1 entra
-        if "' or '1'='1" in (u + s).lower() or "' or 1=1" in (u + s).lower():
-            return render(f"<div class='card'><h2>💡 FASE 4 CONCLUIDA - Login bypass!</h2><p>Voce entrou sem saber a senha, usando SQLi no login.</p><p><b>{DADOS_FAKE_LAB['login']}</b></p><a class='btn' href='/lab'>Voltar pro LAB</a></div>")
-        return render("<div class='card'><b>Login errado no LAB.</b></div><a class='btn' href='/lab-login'>Tentar de novo</a>")
-    return render("""<h2>Fase 4 - Login</h2><div class='card'><form method='post'>
-    <input name='usuario' placeholder='Usuario'><br><br>
-    <input name='senha' placeholder='Senha'><br><br><button>Entrar</button></form>
-    <p>Dica: no LAB, a senha fake nao e o objetivo - o objetivo e entrar SEM a senha.</p></div><a class='btn' href='/lab'>Voltar pro LAB</a>""")
-
-@app.route("/lab-vulneravel")
-def lab_vulneravel_old():
-    # Mantem compatibilidade com o teste antigo
-    return redirect("/lab-sqli")
 
 @app.errorhandler(404)
 def erro404(e):
