@@ -16,6 +16,19 @@ app.config.update(
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Studio2026!")
 
+# DEFESA VIVA - log de ataques + honeypot
+import datetime as _dt
+ATAQUES = []  # lista em memoria: {hora, ip, tipo, url, status}
+HONEYPOTS = ["/.env", "/admin-backup", "/wp-admin", "/wp-login.php", "/.git/config", "/backup.zip", "/loja.db", "/phpmyadmin"]
+
+def registrar_ataque(tipo, url, status):
+    try:
+        ATAQUES.append({"hora": _dt.datetime.now().strftime("%H:%M:%S %d/%m"), "ip": request.remote_addr or "?", "tipo": tipo, "url": url[:120], "status": status})
+        if len(ATAQUES) > 200:
+            del ATAQUES[0:50]
+    except Exception:
+        pass
+
 # CORRIGIDO: rate limit simples do login - bloqueia forca bruta
 from collections import defaultdict
 import time as _time
@@ -70,6 +83,7 @@ def defesa():
     for padrao in PADROES_ATAQUE:
         if padrao in texto:
             print(f"[DEFESA] Bloqueado: {request.remote_addr} tentou '{padrao}' em {request.url}")
+            registrar_ataque(f"Padrao: {padrao}", request.url, 403)
             return "Bloqueado pela defesa - tentativa de ataque detectada.", 403
     return None
 
@@ -182,6 +196,59 @@ def admin():
 def logout():
     session.pop("admin", None)
     return redirect(url_for("home"))
+
+
+# ==================================================================
+# DEFESA VIVA - HONEYPOT + PAINEL
+# Ideia 1: Honeypot - armadilha pra quem tenta invadir
+# Ideia 2: Painel ao vivo com contagem 200/403/404/500 + grafico
+# Ideia 3: Score de saude da loja
+# ==================================================================
+@app.route("/.env")
+@app.route("/admin-backup")
+@app.route("/wp-admin")
+@app.route("/wp-login.php")
+@app.route("/.git/config")
+@app.route("/backup.zip")
+@app.route("/loja.db")
+@app.route("/phpmyadmin")
+def honeypot():
+    # Quem cai aqui nao e cliente - e atacante procurando brecha
+    registrar_ataque("HONEYPOT - tentou arquivo/admin fake", request.url, 404)
+    return render("<div class='card'><h2>Pagina nao encontrada (404)</h2><a class='btn' href='/'>Voltar pra loja</a></div>"), 404
+
+@app.route("/painel-defesa")
+def painel_defesa():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
+    total = len(ATAQUES)
+    c403 = sum(1 for a in ATAQUES if a["status"] == 403)
+    c404 = sum(1 for a in ATAQUES if a["status"] == 404)
+    honey = sum(1 for a in ATAQUES if "HONEYPOT" in a["tipo"])
+    # Score: 100 - penalidade por ataque com sucesso (nenhum deve ter 200)
+    score = 100
+    if total > 0:
+        score = max(0, 100 - honey)  # cada honeypot tira ponto, mas mostra que defesa pegou
+    # Grafico simples com barras
+    max_v = max(c403, c404, honey, 1)
+    def barra(v, cor):
+        pct = int(v / max_v * 100) if max_v else 0
+        return f"<div style='background:#eee;border-radius:8px;margin:6px 0'><div style='width:{pct}%;background:{cor};padding:8px;border-radius:8px;color:#fff'>{v}</div></div>"
+    linhas = ""
+    for a in reversed(ATAQUES[-20:]):
+        linhas += f"<div class='card' style='margin:6px 0;padding:10px'><b>{a['hora']}</b> | IP {a['ip']} | <b>{a['tipo']}</b> | {a['url']} | Status {a['status']}</div>"
+    if not linhas:
+        linhas = "<div class='card'>Nenhum ataque registrado ainda. Roda o V8 que ele aparece aqui.</div>"
+    html = f"""<h2>🛡️ Painel de Defesa Viva</h2>
+    <div class='card'><h3>Score de Saude: {score}/100</h3><p>Quanto mais ataque bloqueado, mais prova que a defesa ta funcionando.</p></div>
+    <div class='card'><h3>Total de ataques registrados: {total}</h3>
+    <p>Bloqueados 403:</p>{barra(c403, '#dc2626')}
+    <p>404 / Honeypot:</p>{barra(c404, '#f59e0b')}
+    <p>Honeypot (armadilha):</p>{barra(honey, '#7c3aed')}
+    </div>
+    <h3>Ultimos 20 ataques</h3>{linhas}
+    <br><a class='btn' href='/'>Voltar pra loja</a> <a class='btn' href='/logout'>Sair</a>"""
+    return render(html)
 
 @app.errorhandler(404)
 def erro404(e):
