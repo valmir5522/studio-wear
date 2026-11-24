@@ -2,6 +2,7 @@
 # Defesa bloqueia SO ataque de verdade. Cliente normal (home, busca camiseta) passa.
 # Senha do admin vem do Render: ADMIN_PASSWORD (nao deixa senha no codigo)
 import os
+import html
 from flask import Flask, request, session, redirect, url_for, render_template_string, jsonify
 
 app = Flask(__name__)
@@ -120,7 +121,11 @@ input{padding:10px;width:70%;border:1px solid #ccc;border-radius:8px}
 
 def render(conteudo, q=""):
     carrinho = session.get("carrinho", [])
-    html = HTML_BASE.replace("{{conteudo}}", conteudo).replace("{{q}}", q).replace("{{carrinho_len}}", str(len(carrinho)))
+    # CORRIGIDO SSTI: escapa o que o usuario digitou antes de colocar no template
+    # Antes: q="{{ 7*7 }}" virava 49 porque entrava como codigo Jinja
+    # Agora: q vira &lt;{{ 7*7 }} e aparece como texto, nao executa
+    q_seguro = html.escape(q)
+    html = HTML_BASE.replace("{{conteudo}}", conteudo).replace("{{q}}", q_seguro).replace("{{carrinho_len}}", str(len(carrinho)))
     return render_template_string(html)
 
 # ==================================================================
