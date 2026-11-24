@@ -292,6 +292,80 @@ def teste_defesa_3():
     return render("<div class='card'><h2>Defesa 3o Ataque Ativa</h2><p>Padroes bloqueados agora: " + str(len(PADROES_BLOQUEIO)) + "</p><p>Bloqueia: builtins.exec, for range, price=NULL, price=0.01, quantity=999, config, localhost</p><p>Preco sempre vem do banco, nunca do usuario.</p><a href='/'>Voltar</a></div>")
 # FIM ADICAO 3o ATAQUE - nada foi apagado
 
+
+# ============================================================
+# ADICAO SITE MAIS REAL - SO ADICIONADO, NENHUMA LETRA TIRADA
+# Codigo anterior inteiro continua acima, igualzinho.
+# Adiciona: mais produtos, categoria, frete, avaliacao, sobre, contato
+# ============================================================
+# 1. ADICIONA mais produtos reais SEM apagar os 6 antigos
+def _adicionar_produtos_reais():
+    try:
+        db = sqlite3.connect(DB)
+        # So adiciona se ainda nao tem esses nomes
+        novos = [
+            ("Camiseta Oversized Branca", 99.90, "Camiseta oversized 100% algodao - Tam P/M/G", ""),
+            ("Calca Jeans Skinny", 179.90, "Calca jeans skinny elastano - Tam 36 a 44", ""),
+            ("Jaqueta Corta-Vento", 229.90, "Jaqueta corta-vento impermeavel - Unissex", ""),
+            ("Tenis Casual Branco", 299.90, "Tenis casual couro - Num 37 a 44", ""),
+            ("Moletom Hoodie Preto", 159.90, "Moletom hoodie com bolso canguru", ""),
+            ("Camisa Social Azul", 139.90, "Camisa social manga longa - Algodao", ""),
+            ("Shorts Esportivo", 79.90, "Shorts esportivo dry-fit", ""),
+            ("Meia Kit 3 Pares", 39.90, "Kit meia cano alto - 3 pares", ""),
+        ]
+        for nome, preco, desc, img in novos:
+            existe = db.execute("SELECT COUNT(*) FROM produtos WHERE nome=?", (nome,)).fetchone()[0]
+            if existe == 0:
+                db.execute("INSERT INTO produtos (nome, preco, descricao, imagem) VALUES (?,?,?,?)", (nome, preco, desc, img))
+        db.commit(); db.close()
+    except Exception:
+        pass
+
+_adicionar_produtos_reais()
+
+# 2. ADICIONA rotas reais SEM apagar as antigas
+@app.route("/categoria/<nome>")
+def categoria(nome):
+    # Mostra produtos por categoria - busca por palavra no nome
+    nome_seguro = _html_lib.escape(nome)
+    db = get_db()
+    rows = db.execute("SELECT * FROM produtos WHERE nome LIKE ?", (f"%{nome}%",)).fetchall()
+    cards = "".join([card_produto(dict(r)) for r in rows]) or "<div class='card'>Nenhum produto nessa categoria.</div>"
+    cats = "<p><b>Categorias:</b> <a href='/categoria/Camiseta'>Camiseta</a> | <a href='/categoria/Calca'>Calca</a> | <a href='/categoria/Tenis'>Tenis</a> | <a href='/categoria/Moletom'>Moletom</a> | <a href='/categoria/Jaqueta'>Jaqueta</a> | <a href='/'>Todas</a></p>"
+    return render(f"<h2>Categoria: {nome_seguro}</h2>{cats}{cards}", q=nome)
+
+@app.route("/frete", methods=["GET","POST"])
+def frete():
+    # Calculo de frete simples e realista - sem apagar nada
+    if request.method == "POST":
+        cep = (request.form.get("cep","") or "").strip()[:9]
+        cep_seguro = _html_lib.escape(cep)
+        # Frete fixo por regiao - exemplo realista
+        if cep.startswith("60"):
+            valor, prazo = 12.90, "1-2 dias (Fortaleza)"
+        elif cep.startswith("01") or cep.startswith("02"):
+            valor, prazo = 19.90, "3-5 dias (SP)"
+        else:
+            valor, prazo = 24.90, "5-8 dias (Brasil)"
+        return render(f"<div class='card'><h2>Frete para CEP {cep_seguro}</h2><p>Valor: <b>R$ {valor:.2f}</b></p><p>Prazo: {prazo}</p><p>Gratis acima de R$ 299,00</p><a href='/frete'>Calcular outro</a> | <a href='/'>Voltar</a></div>")
+    return render("""<div class='card'><h2>Calcular Frete</h2><form method='post'><input name='cep' placeholder='Digite seu CEP ex: 60000-000' required><br><br><button class='btn'>Calcular</button></form></div>""")
+
+@app.route("/sobre")
+def sobre():
+    return render("""<div class='card'><h2>Sobre a STUDIO WEAR</h2><p>Loja de roupa com estilo em Fortaleza - CE.</p><p> Trabalhamos com: Camiseta, Calca, Tenis, Moletom, Jaqueta e mais.</p><p> Pagamento: Pix, Mercado Pago e WhatsApp.</p><p> Entrega: Fortaleza 1-2 dias, resto do Brasil 5-8 dias.</p><p> Troca: 7 dias apos recebimento.</p><a href='/'>Voltar</a></div>""")
+
+@app.route("/contato")
+def contato():
+    return render(f"""<div class='card'><h2>Contato</h2><p>WhatsApp: {_html_lib.escape(NUMERO_WHATSAPP)}</p><p>Pix: {_html_lib.escape(CHAVE_PIX)}</p><p>Horario: Seg a Sab 9h as 18h</p><a class='btn btn-green' href='https://wa.me/{NUMERO_WHATSAPP}' target='_blank'>Chamar no WhatsApp</a></div>""")
+
+@app.route("/avaliacao/<int:pid>")
+def avaliacao(pid):
+    # Avaliacao fixa de exemplo - sem banco novo, so para deixar mais real
+    avs = {1: "⭐⭐⭐⭐⭐ Otima camiseta, tecido bom!", 2: "⭐⭐⭐⭐ Calca confortavel", 3: "⭐⭐⭐⭐⭐ Bone top!"}
+    texto = avs.get(pid, "⭐⭐⭐⭐⭐ Produto muito bom, recomendo! Entrega rapida.")
+    return render(f"<div class='card'><h2>Avaliacoes</h2><p>{_html_lib.escape(texto)}</p><a href='/produto/{pid}'>Voltar pro produto</a></div>")
+# FIM ADICAO SITE MAIS REAL - nada foi apagado
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
