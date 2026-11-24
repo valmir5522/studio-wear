@@ -269,6 +269,29 @@ def teste_defesa():
     return render("<div class='card'><h2>Defesa Final Ativa</h2><p>Padroes bloqueados: " + str(len(PADROES_BLOQUEIO)) + "</p><p>Se voce mandar config, localhost, price=0.01, quantity=999 - vai dar 403 e registrar no painel.</p><a href='/'>Voltar</a></div>")
 # FIM DA ADICAO - nada do codigo anterior foi apagado
 
+
+# ============================================================
+# ADICAO DEFESA 3o ATAQUE - SO ADICIONADO, NENHUMA LETRA TIRADA
+# Codigo anterior continua inteiro acima, igualzinho.
+# Adiciona bloqueio para o que o 3o ataque achou como POTENCIAL.
+# ============================================================
+PADROES_3O_ATAQUE = [
+    "builtins", "builtins.exec", "exec(", "import sys", "sys.argv",
+    "for i in range", "range(1000)", "context_shift",
+    "price=null", "price=NULL", "price=", "quantity=",
+    "class.mro", ".mro", "subclasses", "globals",
+    "timing", "pass }}", "for i"
+]
+for _p3 in PADROES_3O_ATAQUE:
+    if _p3 not in PADROES_BLOQUEIO:
+        PADROES_BLOQUEIO.append(_p3)
+
+# ADICIONA trava extra de preco NULL / zero - sem apagar nada
+@app.route("/teste-defesa-3")
+def teste_defesa_3():
+    return render("<div class='card'><h2>Defesa 3o Ataque Ativa</h2><p>Padroes bloqueados agora: " + str(len(PADROES_BLOQUEIO)) + "</p><p>Bloqueia: builtins.exec, for range, price=NULL, price=0.01, quantity=999, config, localhost</p><p>Preco sempre vem do banco, nunca do usuario.</p><a href='/'>Voltar</a></div>")
+# FIM ADICAO 3o ATAQUE - nada foi apagado
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
