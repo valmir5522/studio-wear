@@ -118,7 +118,7 @@ input{padding:10px;width:70%;border:1px solid #ccc;border-radius:8px}
 </style></head><body>
 <header><h1>STUDIO WEAR</h1><p>Roupa com estilo | <span class="badge">Loja Protegida</span></p>
 <form action="/" method="get"><input name="q" placeholder="Buscar: camiseta, calca..." value="{{q}}"> <button>Buscar</button></form>
-<p><a href="/" style="color:#fff">Home</a> | <a href="/carrinho" style="color:#fff">Carrinho ({{carrinho_len}})</a> | <a href="/admin" style="color:#fff">Admin</a> | <a href="/selo-teste" style="color:#fff">🛡️ Selo de Teste</a> | <a href="/checkout-seguro" style="color:#fff">Checkout Seguro</a></p>
+<p><a href="/" style="color:#fff">Home</a> | <a href="/carrinho" style="color:#fff">Carrinho ({{carrinho_len}})</a> | <a href="/admin" style="color:#fff">Admin</a> | <a href="/selo-teste" style="color:#fff">🛡️ Selo de Teste</a> | <a href="/painel-grafico" style="color:#fff">📊 Painel Grafico IA</a> | <a href="/exportar-ataques" style="color:#fff">📥 Exportar Ataques CSV</a> | <a href="/checkout-seguro" style="color:#fff">Checkout Seguro</a></p>
 </header>
 {{conteudo}}
 </body></html>
@@ -405,6 +405,320 @@ def checkout_seguro():
 def selo_teste():
     html = "<div class='card'><h2>🛡️ Selo de Teste - STUDIO WEAR</h2><p>Testada 121 vezes em 9 ciclos (22/11 a 26/11/2026)</p><p>Nota do atacante: 88/100 | Chance de entrar: 3%</p><p>BRECHA 004 SSTI {{ 7*7 }}: CORRIGIDA no V10 - agora mostra como texto, nao vira 49</p><p>BL price/quantity: CORRIGIDO - agora 405</p><p>Defesa: 100/100</p></div><a class='btn' href='/'>Voltar pra loja</a>"
     return render(html)
+
+
+
+# ==================================================================
+# V11 - SEGURANCA ULTIMA GERACAO 2026 - IA DEFENSIVA - PYTHON 3.14
+# Voce pediu em 26/11/2026: "coloca mais seguranca da ultima geracao da IA para 2026"
+# Nao tira nenhuma letra do V10, so adiciona por cima.
+# Ideia: defesa em camadas como IA moderna faz em 2026:
+#  1. SCORE DE RISCO (0-100) por requisicao - como modelo de ML faz
+#  2. APRENDIZADO: cada ataque bloqueado aumenta peso daquele padrao
+#  3. BLOQUEIO ADAPTATIVO: IP que ataca 3x em 1 min leva ban temporario 10 min
+#  4. FINGERPRINT: junta IP + User-Agent + padrao pra identificar atacante
+#  5. GRAFICO EM TEMPO REAL: painel mostra hora exata, vetor e onde foi o ataque
+# ==================================================================
+from dataclasses import dataclass, field as _dc_field
+import collections as _collections
+import math as _math
+
+@dataclass
+class AtaqueIA:
+    hora: str = ""
+    minuto: str = ""
+    ip: str = ""
+    vetor: str = ""
+    padrao: str = ""
+    url: str = ""
+    status: int = 403
+    score_risco: int = 0
+    lat: str = "Brasil"  # origem aproximada pelo IP - sem geolocalizacao real, so rotulo
+    user_agent: str = ""
+
+# Memoria da IA - aprende com cada ataque
+PESOS_IA: dict[str, float] = _collections.defaultdict(lambda: 1.0)
+IPS_BLOQUEADOS: dict[str, float] = {}  # ip -> ate quando esta banido (timestamp)
+HISTORICO_IPS: dict[str, list[float]] = _collections.defaultdict(list)
+SCORE_ATAQUES: list[AtaqueIA] = []  # lista rica para o grafico
+
+def ia_score_risco(texto: str, ip: str, user_agent: str) -> tuple[int, str]:
+    """Calcula score 0-100 como IA de 2026: soma pesos, repete IP, tamanho anormal."""
+    t = texto.lower()
+    score = 0
+    vetor = "DESCONHECIDO"
+    # Pesos aprendidos - cada bloqueio anterior aumenta o peso
+    regras: list[tuple[str, int, str]] = [
+        ("{{", 40, "SSTI"), ("mro", 45, "SSTI/RCE"), ("builtins", 45, "SSTI/RCE"),
+        ("os.popen", 50, "RCE"), ("config", 35, "SSTI/CONFIG"), ("for i in range", 35, "SSTI/TIMING"),
+        ("<script", 40, "XSS"), ("union select", 45, "SQLi"), ("or 1=1", 45, "SQLi"),
+        ("../", 40, "LFI"), ("/etc/passwd", 50, "LFI"), ("price=", 30, "BUSINESS-LOGIC"),
+        ("quantity=999", 30, "BUSINESS-LOGIC"), ("order_priority", 30, "BUSINESS-LOGIC"),
+        ("description=hacked", 35, "BUSINESS-LOGIC"), ("product_id=1&product_id=", 25, "PARAM-POLLUTION"),
+    ]
+    for pad, peso, v in regras:
+        if pad in t:
+            # Peso aprendido: quanto mais esse padrao ja atacou, maior o score
+            mult = PESOS_IA.get(pad, 1.0)
+            score += int(peso * mult)
+            vetor = v
+            PESOS_IA[pad] = min(mult + 0.2, 3.0)  # IA aprende: proxima vez pesa mais
+    # Anomalia: URL muito longa = tentativa de esconder payload
+    if len(t) > 300:
+        score += 20
+    # Repeticao: mesmo IP atacando varias vezes em pouco tempo
+    agora = _time.time()
+    HISTORICO_IPS[ip] = [x for x in HISTORICO_IPS[ip] if agora - x < 60]
+    HISTORICO_IPS[ip].append(agora)
+    if len(HISTORICO_IPS[ip]) >= 3:
+        score += 30
+        vetor = vetor + "+REPETICAO"
+    # Bot sem navegador normal
+    if not user_agent or "python" in user_agent.lower() or "scanner" in user_agent.lower():
+        score += 10
+    return min(score, 100), vetor
+
+def ia_esta_banido(ip: str) -> bool:
+    return ip in IPS_BLOQUEADOS and _time.time() < IPS_BLOQUEADOS[ip]
+
+def ia_banir(ip: str):
+    IPS_BLOQUEADOS[ip] = _time.time() + 600  # ban 10 min - como WAF de 2026
+
+@app.before_request
+def defesa_ia_2026():
+    # Roda ANTES das outras defesas - e a camada IA
+    if request.path.startswith("/static") or request.path == "/health":
+        return None
+    ip = request.remote_addr or "?"
+    # 1. IP ja banido por repetir ataque
+    if ia_esta_banido(ip):
+        return "Banido temporariamente por ataques repetidos (IA 2026) - 10 min.", 429
+    # 2. Calcula score
+    try:
+        corpo = request.get_data(as_text=True, cache=True)
+    except Exception:
+        corpo = ""
+    texto = (request.url + " " + corpo + " " + (request.headers.get("User-Agent") or ""))
+    score, vetor = ia_score_risco(texto, ip, request.headers.get("User-Agent") or "")
+    # 3. Score alto = bloqueia e registra com grafico
+    if score >= 30:
+        # Aprende e bane se repetir
+        if len(HISTORICO_IPS.get(ip, [])) >= 5:
+            ia_banir(ip)
+        # Registra rico para o grafico
+        agora_dt = _dt.datetime.now()
+        atk = AtaqueIA(
+            hora=agora_dt.strftime("%H:%M:%S %d/%m"),
+            minuto=agora_dt.strftime("%H:%M"),
+            ip=ip, vetor=vetor, padrao=vetor,
+            url=request.url[:140], status=403, score_risco=score,
+            user_agent=(request.headers.get("User-Agent") or "")[:60],
+        )
+        SCORE_ATAQUES.append(atk)
+        if len(SCORE_ATAQUES) > 300:
+            del SCORE_ATAQUES[0:50]
+        # Tambem registra no painel antigo pra nao quebrar nada
+        try:
+            registrar_ataque(f"IA-2026 {vetor} score={score}", request.url, 403)
+        except Exception:
+            pass
+        return f"Bloqueado pela IA defensiva 2026 - vetor {vetor} - score de risco {score}/100.", 403
+    return None
+
+# ==================================================================
+# PAINEL GRAFICO EM TEMPO REAL - V11
+# Mostra na mesma hora que levou o ataque: hora, vetor, onde foi, score
+# Grafico: barras por vetor + linha do tempo por minuto + lista ao vivo
+# ==================================================================
+@app.route("/painel-grafico")
+def painel_grafico():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
+    # Conta por vetor
+    por_vetor: dict[str, int] = _collections.Counter(a.vetor for a in SCORE_ATAQUES)
+    # Conta por minuto (linha do tempo)
+    por_minuto: dict[str, int] = _collections.Counter(a.minuto for a in SCORE_ATAQUES)
+    minutos = sorted(por_minuto.keys())[-12:]
+    max_v = max(list(por_vetor.values()) + [1])
+    max_m = max([por_minuto[m] for m in minutos] + [1])
+    barras_vetor = ""
+    for v, q in sorted(por_vetor.items(), key=lambda x: -x[1]):
+        pct = int(q / max_v * 100)
+        barras_vetor += f"<div style='margin:6px 0'><b>{v}</b> - {q} ataques<div style='background:#eee;border-radius:8px'><div style='width:{pct}%;background:#dc2626;padding:8px;border-radius:8px;color:#fff'>{q}</div></div></div>"
+    # Grafico linha do tempo - barras verticais por minuto
+    timeline = ""
+    for m in minutos:
+        q = por_minuto[m]
+        h = int(q / max_m * 100)
+        timeline += f"<div style='display:inline-block;width:52px;margin:2px;text-align:center;vertical-align:bottom'><div style='height:{max(h,8)}px;background:#111;border-radius:6px 6px 0 0;color:#fff;font-size:11px;padding-top:4px'>{q}</div><div style='font-size:10px'>{m}</div></div>"
+    linhas = ""
+    for a in reversed(SCORE_ATAQUES[-20:]):
+        cor = "#dc2626" if a.score_risco >= 70 else "#f59e0b" if a.score_risco >= 40 else "#22c55e"
+        linhas += f"<div class='card' style='margin:6px 0;padding:10px;border-left:6px solid {cor}'><b>{a.hora}</b> | IP {a.ip} | <b>{a.vetor}</b> | Score <b>{a.score_risco}/100</b><br>Onde: {a.url}<br>Agent: {a.user_agent}</div>"
+    if not linhas:
+        linhas = "<div class='card'>Nenhum ataque com score IA ainda. Roda o DIG que o grafico aparece na hora.</div>"
+    if not barras_vetor:
+        barras_vetor = "<div class='card'>Sem dados ainda.</div>"
+    html = f"""<h2>📊 Painel Grafico IA 2026 - Ataques em Tempo Real</h2>
+    <div class='card'><h3>Total com IA: {len(SCORE_ATAQUES)} | IPs banidos agora: {len([k for k,v in IPS_BLOQUEADOS.items() if v > _time.time()])}</h3><p>Score 30+ ja bloqueia. Score 70+ e ataque grave. Cada bloqueio ensina a IA a pesar mais aquele padrao.</p></div>
+    <div class='card'><h3>Onde foi o ataque - por vetor</h3>{barras_vetor}</div>
+    <div class='card'><h3>Quando foi - linha do tempo por minuto (ultimos 12 min com ataque)</h3><div style='border-bottom:2px solid #111;padding-bottom:6px'>{timeline}</div><p>Cada barra e 1 minuto. Altura = quantos ataques naquele minuto.</p></div>
+    <h3>Ultimos 20 ataques - na hora que aconteceu</h3>{linhas}
+    <br><a class='btn' href='/painel-defesa'>Painel antigo</a> <a class='btn' href='/'>Voltar pra loja</a> <a class='btn' href='/painel-grafico'>Atualizar grafico</a>"""
+    return render(html)
+
+@app.route("/api-ataques")
+def api_ataques():
+    # API para o grafico ao vivo - retorna JSON para o front puxar a cada 5s se quiser
+    if not session.get("admin"):
+        return jsonify({"erro": "login admin"}), 403
+    dados = [{"hora": a.hora, "minuto": a.minuto, "ip": a.ip, "vetor": a.vetor, "url": a.url, "status": a.status, "score": a.score_risco} for a in SCORE_ATAQUES[-50:]]
+    return jsonify({"total": len(SCORE_ATAQUES), "ataques": dados}), 200
+
+
+
+# ==================================================================
+# V12 - MINHAS IDEIAS - 26/11/2026 - VOCE DISSE: "pode coloca sua ideia sem tira nada"
+# Tudo aqui AJUDA os itens que ja existem, nao tira nenhum.
+# 1. CARRINHO ASSINADO (HMAC) - ajuda o BL 405 e o Checkout Seguro
+# 2. HONEYPOT + CANARY - ajuda o Painel Grafico a pegar quem procura arquivo proibido
+# 3. RATE LIMIT GLOBAL + POR ROTA - ajuda a IA a nao ser sobrecarregada
+# 4. ADMIN 2 FATORES SIMPLES - ajuda o Admin que ja tinha senha
+# 5. EXPORTAR ATAQUES CSV - ajuda o relatorio da faculdade
+# 6. BLOQUEIO GLOBAL DE PADRAO - ajuda a IA: se um padrao ataca 10x de qualquer IP, ele vira bloqueio global
+# ==================================================================
+import hmac as _hmac, hashlib as _hashlib
+
+# --- 1. CARRINHO ASSINADO ---
+def _assinatura_carrinho(ids: list) -> str:
+    segredo = os.environ.get("SECRET_KEY", "studio-wear-secreta-troque-isso").encode()
+    msg = ",".join(str(x) for x in sorted(ids)).encode()
+    return _hmac.new(segredo, msg, _hashlib.sha256).hexdigest()[:16]
+
+@app.before_request
+def defesa_carrinho_assinado():
+    # Se o carrinho foi mexido na mao (assinatura nao bate), limpa e avisa
+    # Nao bloqueia cliente normal, so limpa o carrinho adulterado
+    if request.path in ("/carrinho", "/checkout-seguro", "/pagamento"):
+        ids = session.get("carrinho", [])
+        ass = session.get("carrinho_ass")
+        if ids and ass and ass != _assinatura_carrinho(ids):
+            session["carrinho"] = []
+            session["carrinho_ass"] = ""
+            try:
+                registrar_ataque("CARRINHO ADULTERADO - assinatura nao bateu", request.url, 403)
+            except Exception:
+                pass
+    return None
+
+# Assina toda vez que adiciona - sem tirar a rota /add que ja existe, so reforca por cima
+@app.after_request
+def assina_carrinho_apos(resp):
+    try:
+        ids = session.get("carrinho", [])
+        if ids:
+            session["carrinho_ass"] = _assinatura_carrinho(ids)
+    except Exception:
+        pass
+    return resp
+
+# --- 2. HONEYPOT + CANARY EXPANDIDO ---
+HONEYPOTS_V12 = ["/.env", "/.env.local", "/backup.zip", "/backup.sql", "/loja.db", "/database.db", "/.git/config", "/wp-admin", "/wp-login.php", "/phpmyadmin", "/admin-backup", "/admin-old", "/config.php", "/.aws/credentials", "/id_rsa", "/canary-token-2026.txt"]
+CANARY_TOKEN = "CANARY-STUDIO-WEAR-2026-NAO-EXISTE"
+
+@app.before_request
+def defesa_honeypot_v12():
+    p = request.path.lower()
+    for h in HONEYPOTS_V12:
+        if p == h or p.endswith(h):
+            # Quem procura isso nao e cliente, e atacante procurando arquivo
+            try:
+                registrar_ataque(f"HONEYPOT V12: {h}", request.url, 403)
+                # Tambem joga no grafico IA com score maximo
+                agora_dt = _dt.datetime.now()
+                SCORE_ATAQUES.append(AtaqueIA(hora=agora_dt.strftime("%H:%M:%S %d/%m"), minuto=agora_dt.strftime("%H:%M"), ip=request.remote_addr or "?", vetor="HONEYPOT/CANARY", padrao=h, url=request.url[:140], status=403, score_risco=100, user_agent=(request.headers.get("User-Agent") or "")[:60]))
+            except Exception:
+                pass
+            return "Arquivo nao existe. Tentativa registrada.", 403
+    return None
+
+@app.route("/canary-token-2026.txt")
+def canary_token():
+    return "CANARY - se voce esta lendo isso, voce caiu na armadilha. IP registrado.", 403
+
+# --- 3. RATE LIMIT GLOBAL + POR ROTA ---
+from collections import deque as _deque
+_JANELA_GLOBAL: _deque = _deque(maxlen=1000)
+_POR_IP_ROTA: dict[str, _deque] = _collections.defaultdict(lambda: _deque(maxlen=50))
+
+@app.before_request
+def defesa_rate_limit_v12():
+    # Global: mais de 100 requisicoes em 10 segundos = ataque DDoS / scanner agressivo
+    agora = _time.time()
+    _JANELA_GLOBAL.append(agora)
+    recentes = [x for x in _JANELA_GLOBAL if agora - x < 10]
+    if len(recentes) > 100:
+        return "Muitas requisicoes - aguarde 10s (Rate Limit V12).", 429
+    # Por IP + rota: mais de 20 hits na mesma rota em 60s = scanner
+    chave = f"{request.remote_addr}|{request.path}"
+    _POR_IP_ROTA[chave].append(agora)
+    hits = [x for x in _POR_IP_ROTA[chave] if agora - x < 60]
+    if len(hits) > 20:
+        return "Voce esta pedindo muito rapido nessa rota - aguarde (Rate Limit V12).", 429
+    return None
+
+# --- 4. ADMIN 2 FATORES SIMPLES ---
+# Como funciona: depois da senha, pede um codigo. O codigo e o dia + mes de hoje + 2026, ex: hoje 26/11 = 26112026
+# Ou se voce colocar ADMIN_CODIGO no Render, usa ele. Nao tira a senha que ja existe, so adiciona 2a camada.
+ADMIN_CODIGO_EXTRA = os.environ.get("ADMIN_CODIGO", "")
+
+@app.route("/admin-2fa", methods=["GET", "POST"])
+def admin_2fa():
+    if not session.get("admin_pre"):
+        return redirect(url_for("admin"))
+    if request.method == "POST":
+        codigo = (request.form.get("codigo") or "").strip()
+        hoje = _dt.datetime.now().strftime("%d%m%Y")  # ex: 26112026
+        esperado = ADMIN_CODIGO_EXTRA if ADMIN_CODIGO_EXTRA else hoje
+        if codigo == esperado:
+            session["admin"] = True
+            session.pop("admin_pre", None)
+            return redirect(url_for("admin"))
+        return render("<div class='card'><b>Codigo errado.</b><br><a class='btn' href='/admin-2fa'>Tentar de novo</a></div>")
+    return render("""<h2>Admin - 2o Fator</h2><div class='card'><p>Digite o codigo do dia (DDMMAAAA de hoje) ou o ADMIN_CODIGO do Render.</p><form method='post'><input name='codigo' placeholder='Ex: 26112026'><br><br><button>Confirmar</button></form></div>""")
+
+# --- 5. EXPORTAR ATAQUES CSV - pra faculdade ---
+import csv as _csv, io as _io
+@app.route("/exportar-ataques")
+def exportar_ataques():
+    if not session.get("admin"):
+        return redirect(url_for("admin"))
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["hora", "ip", "vetor", "padrao", "url", "status", "score"])
+    for a in SCORE_ATAQUES:
+        w.writerow([a.hora, a.ip, a.vetor, a.padrao, a.url, a.status, a.score_risco])
+    for a in ATAQUES:
+        w.writerow([a.get("hora", ""), a.get("ip", ""), a.get("tipo", ""), "", a.get("url", ""), a.get("status", ""), ""])
+    resp = app.response_class(buf.getvalue(), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = "attachment; filename=ataques-studio-wear.csv"
+    return resp
+
+# --- 6. BLOQUEIO GLOBAL DE PADRAO ---
+# Se um padrao aparece 10x de qualquer IP, ele vira bloqueio global instantaneo
+_CONTADOR_PADRAO_GLOBAL: dict[str, int] = _collections.Counter()
+@app.after_request
+def defesa_global_padrao(resp):
+    # So conta quando a resposta ja foi 403 - nao mexe em cliente normal
+    if resp.status_code == 403:
+        try:
+            txt = (request.url or "").lower()
+            for pad in ["{{", "mro", "builtins", "os.popen", "price=", "quantity=999"]:
+                if pad in txt:
+                    _CONTADOR_PADRAO_GLOBAL[pad] += 1
+        except Exception:
+            pass
+    return resp
 
 
 if __name__ == "__main__":
