@@ -490,9 +490,24 @@ def defesa_ia_2026():
     if request.path.startswith("/static") or request.path == "/health":
         return None
     ip = request.remote_addr or "?"
-    # 1. IP ja banido por repetir ataque
-    if ia_esta_banido(ip):
-        return "Banido temporariamente por ataques repetidos (IA 2026) - 10 min.", 429
+    # CORRIGIDO V13: admin logado nunca e banido - voce e o dono
+    if session.get("admin"):
+        return None
+    # CORRIGIDO V13: ban so vale se tentar ATACAR de novo. Pagina limpa passa.
+    # Calcula primeiro se esta requisicao tem ataque, antes de decidir bloquear por ban.
+    try:
+        _corpo_prev = request.get_data(as_text=True, cache=True)
+    except Exception:
+        _corpo_prev = ""
+    _texto_prev = (request.url + " " + _corpo_prev).lower()
+    _tem_ataque = any(p in _texto_prev for p in ["{{", "mro", "builtins", "os.popen", "config", "<script", "union select", "or 1=1", "../", "/etc/passwd", "price=", "quantity=999", "order_priority", "description=hacked"])
+    _rota_livre = request.path in ROTAS_SEMPRE_LIVRES_V13
+    # Se esta banido E esta tentando atacar de novo -> bloqueia 429
+    if ia_esta_banido(ip) and _tem_ataque:
+        return "Banido temporariamente por ataques repetidos (IA 2026) - 10 min. Acesse /desbanir-me para liberar.", 429
+    # Se esta banido MAS e pagina limpa em rota livre -> deixa passar, nao bloqueia
+    if ia_esta_banido(ip) and _rota_livre and not _tem_ataque:
+        return None
     # 2. Calcula score
     try:
         corpo = request.get_data(as_text=True, cache=True)
@@ -719,6 +734,38 @@ def defesa_global_padrao(resp):
         except Exception:
             pass
     return resp
+
+
+
+# ==================================================================
+# CORRIGIDO V13 - 27/11/2026 - BUG DO BAN QUE PEGOU VOCE MESMO
+# Prints: /selo-teste, /painel-grafico, /checkout-seguro deram "Banido 10 min" mesmo sendo pagina normal.
+# Regra nova: BAN SO BLOQUEIA SE TENTAR ATACAR DE NOVO. Pagina limpa passa.
+# + Admin logado NUNCA e banido. + Rota /desbanir-me limpa o ban do seu IP.
+# ==================================================================
+ROTAS_SEMPRE_LIVRES_V13 = ["/", "/selo-teste", "/painel-grafico", "/painel-defesa", "/checkout-seguro", "/carrinho", "/pagamento", "/exportar-ataques", "/admin", "/admin-2fa", "/desbanir-me", "/health"]
+
+@app.route("/desbanir-me")
+def desbanir_me():
+    ip = request.remote_addr or "?"
+    IPS_BLOQUEADOS.pop(ip, None)
+    try:
+        HISTORICO_IPS[ip] = []
+    except Exception:
+        pass
+    return render("<div class='card'><h2>✅ Desbanido!</h2><p>Seu IP foi liberado. Voce pode navegar de novo.</p><p>Se atacar de novo, o ban volta - e assim que tem que ser.</p></div><br><a class='btn' href='/'>Voltar pra loja</a> <a class='btn' href='/painel-grafico'>Ver painel grafico</a>")
+
+@app.before_request
+def defesa_ia_2026_v13_corrige_ban():
+    # Esta funcao roda DEPOIS da defesa_ia_2026 original, mas corrige o efeito dela:
+    # Se a requisicao e limpa (sem padrao de ataque) e a rota e segura, nao deixa o ban bloquear.
+    # Na pratica: o ban original ja teria retornado 429 antes, entao precisamos corrigir NA ORIGEM.
+    # Por isso a correcao real esta abaixo, embutida na funcao original via monkey-patch simples:
+    return None
+
+# --- PATCH NA FUNCAO ORIGINAL: troca a primeira parte dela ---
+# Antes: if ia_esta_banido(ip): return 429 pra tudo
+# Depois: se esta banido MAS a requisicao e limpa e rota livre ou admin, deixa passar. So bloqueia se tentar atacar de novo.
 
 
 if __name__ == "__main__":
